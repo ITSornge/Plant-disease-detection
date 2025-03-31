@@ -1,39 +1,96 @@
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, BatchNormalization, GlobalAveragePooling2D, Dense, Dropout
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
+import os
 
-# Step 1: Load and Preprocess Data
-train_dir = "dataset/train"
-val_dir = "dataset/val"
+# Create models directory if not exists
+os.makedirs("models", exist_ok=True)
 
-train_datagen = ImageDataGenerator(rescale=1./255)
+# Enhanced Data Augmentation
+train_datagen = ImageDataGenerator(
+    rescale=1./255,
+    rotation_range=40,
+    width_shift_range=0.3,
+    height_shift_range=0.3,
+    shear_range=0.3,
+    zoom_range=0.3,
+    horizontal_flip=True,
+    vertical_flip=True,
+    brightness_range=[0.7, 1.3],
+    fill_mode='nearest'
+)
+
+# Validation data (no augmentation)
 val_datagen = ImageDataGenerator(rescale=1./255)
 
+# Data generators
 train_generator = train_datagen.flow_from_directory(
-    train_dir, target_size=(128, 128), batch_size=32, class_mode="binary"
+    'dataset/train',
+    target_size=(128, 128),
+    batch_size=32,
+    class_mode='categorical',
+    shuffle=True
 )
 
 val_generator = val_datagen.flow_from_directory(
-    val_dir, target_size=(128, 128), batch_size=32, class_mode="binary"
+    'dataset/val',
+    target_size=(128, 128),
+    batch_size=32,
+    class_mode='categorical',
+    shuffle=False
 )
 
-# Step 2: Define CNN Model
+# Improved Model Architecture
 model = Sequential([
-    Conv2D(32, (3,3), activation="relu", input_shape=(128,128,3)),
-    MaxPooling2D(2,2),
-    Conv2D(64, (3,3), activation="relu"),
-    MaxPooling2D(2,2),
-    Flatten(),
-    Dense(128, activation="relu"),
-    Dense(1, activation="sigmoid")  # Binary Classification
+    Conv2D(32, (3, 3), activation='relu', input_shape=(128, 128, 3), padding='same'),
+    BatchNormalization(),
+    MaxPooling2D(2, 2),
+    
+    Conv2D(64, (3, 3), activation='relu', padding='same'),
+    BatchNormalization(),
+    MaxPooling2D(2, 2),
+    
+    Conv2D(128, (3, 3), activation='relu', padding='same'),
+    BatchNormalization(),
+    MaxPooling2D(2, 2),
+    
+    Conv2D(256, (3, 3), activation='relu', padding='same'),
+    BatchNormalization(),
+    GlobalAveragePooling2D(),
+    
+    Dense(512, activation='relu'),
+    Dropout(0.6),
+    Dense(3, activation='softmax')
 ])
 
-model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+# Custom optimizer configuration
+optimizer = Adam(learning_rate=0.0001)
+model.compile(
+    optimizer=optimizer,
+    loss='categorical_crossentropy',
+    metrics=['accuracy', tf.keras.metrics.Precision(), tf.keras.metrics.Recall()]
+)
 
-# Step 3: Train Model
-model.fit(train_generator, validation_data=val_generator, epochs=10)
+# Enhanced Callbacks
+callbacks = [
+    EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True),
+    ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=3, min_lr=1e-6),
+    ModelCheckpoint('models/plant_disease_model_best.h5', save_best_only=True)
+]
 
-# Step 4: Save Model
-model.save("models/plant_disease_model.h5")
-print("✅ Model Training Complete & Saved!")
+# Train the model
+history = model.fit(
+    train_generator,
+    epochs=50,
+    validation_data=val_generator,
+    callbacks=callbacks,
+    verbose=1
+)
+
+# Save the final model
+model.save('models/plant_disease_model_final.h5')
+print("\n✅ Model successfully trained and saved!")
+print(f"Final validation accuracy: {history.history['val_accuracy'][-1]:.2%}")
